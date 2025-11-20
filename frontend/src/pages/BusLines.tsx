@@ -7,12 +7,88 @@ import { FormInput, FormSelect } from '../components/FormInput';
 import { useToast } from '../components/Toast';
 import { useApp } from '../context/AppContext';
 import { Plus } from 'lucide-react';
-import { supabase } from '../utils/supabase';
-import { BusLine } from '../types';
+import { BusLine, Station } from '../types';
+
+const API_URL = 'http://localhost:3001/api';
+
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+type BufferLike = { type: 'Buffer'; data: number[] };
+
+const isBufferLike = (value: unknown): value is BufferLike =>
+  typeof value === 'object' &&
+  value !== null &&
+  (value as BufferLike).type === 'Buffer' &&
+  Array.isArray((value as BufferLike).data);
+
+const isNumberArray = (value: unknown): value is number[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'number');
+
+const getStationId = (station: Station | Record<string, unknown>) => {
+  const source = station as Record<string, unknown>;
+  const rawId =
+    source['id_station'] ||
+    source['ID_STATION'] ||
+    source['id'] ||
+    source['ID'];
+
+  return rawId ? String(rawId) : '';
+};
+
+const toHexFromBufferObject = (value: unknown): string | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === 'string' || typeof value === 'number') {
+    return String(value);
+  }
+
+  if (isBufferLike(value)) {
+    return value.data.map((byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase();
+  }
+
+  if (isNumberArray(value)) {
+    return value.map((byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase();
+  }
+
+  if (typeof value === 'object') {
+    const candidate = value as Record<string, unknown>;
+    const fromKeys = candidate['id'] || candidate['ID'];
+    return fromKeys ? String(fromKeys) : null;
+  }
+
+  return null;
+};
+
+const getBusLineId = (line: BusLine | Record<string, unknown>) => {
+  const source = line as Record<string, unknown>;
+  const rawId =
+    source['id_line'] ||
+    source['ID_LINE'] ||
+    source['id_bus_line'] ||
+    source['ID_BUS_LINE'] ||
+    source['id'] ||
+    source['ID'];
+
+  return toHexFromBufferObject(rawId);
+};
 
 export function BusLines() {
   const { busLines, stations, fetchData } = useApp();
   const { showToast } = useToast();
+  
+  // ✅ DEBUG : Afficher les données reçues
+  console.log('=== BUS LINES PAGE DEBUG ===');
+  console.log('Bus Lines data:', busLines);
+  console.log('Bus Lines count:', busLines.length);
+  console.log('Stations data:', stations);
+  if (busLines.length > 0) {
+    console.log('First bus line:', busLines[0]);
+    console.log('First bus line keys:', Object.keys(busLines[0]));
+  }
+  
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBusLine, setEditingBusLine] = useState<BusLine | null>(null);
   const [formData, setFormData] = useState({
@@ -31,29 +107,66 @@ export function BusLines() {
     setLoading(true);
 
     try {
+      // ✅ DEBUG : Voir ce qui est envoyé
+      console.log('=== SUBMIT DEBUG ===');
+      console.log('formData:', formData);
+      
       const payload = {
-        ...formData,
+        name: formData.name,
+        code: formData.code,
+        origin_station_id: formData.origin_station_id,
+        destination_station_id: formData.destination_station_id,
         distance_km: parseFloat(formData.distance_km),
         duration_minutes: parseInt(formData.duration_minutes),
+        status: formData.status,
       };
+      
+      console.log('Payload to send:', payload);
 
       if (editingBusLine) {
-        const { error } = await supabase
-          .from('bus_lines')
-          .update(payload)
-          .eq('id', editingBusLine.id);
-        if (error) throw error;
+        // ✅ UPDATE
+        const busLineId = getBusLineId(editingBusLine);
+        
+        if (!busLineId) {
+          throw new Error('Bus line ID missing, cannot update');
+        }
+
+        const response = await fetch(`${API_URL}/bus_lines/${busLineId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const result = await response.json();
+        if (!response.ok || result.error) {
+          throw new Error(result.error || 'Failed to update bus line');
+        }
+        
         showToast('Bus line updated successfully', 'success');
       } else {
-        const { error } = await supabase.from('bus_lines').insert([payload]);
-        if (error) throw error;
+        // ✅ INSERT
+        const response = await fetch(`${API_URL}/bus_lines`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const result = await response.json();
+        if (!response.ok || result.error) {
+          throw new Error(result.error || 'Failed to create bus line');
+        }
+        
         showToast('Bus line created successfully', 'success');
       }
+      
+      // ✅ Rafraîchir les données
       await fetchData('busLines');
+      
       setIsModalOpen(false);
       resetForm();
-    } catch (error: any) {
-      showToast(error.message || 'An error occurred', 'error');
+    } catch (error: unknown) {
+      console.error('Error:', error);
+      showToast(getErrorMessage(error) || 'An error occurred', 'error');
     } finally {
       setLoading(false);
     }
@@ -73,12 +186,16 @@ export function BusLines() {
   };
 
   const handleEdit = (busLine: BusLine) => {
+    // ✅ DEBUG : Voir la structure exacte
+    console.log('=== EDIT DEBUG ===');
+    console.log('Bus Line object:', busLine);
+    
     setEditingBusLine(busLine);
     setFormData({
       name: busLine.name,
       code: busLine.code,
-      origin_station_id: busLine.origin_station_id,
-      destination_station_id: busLine.destination_station_id,
+      origin_station_id: String(busLine.origin_station_id),
+      destination_station_id: String(busLine.destination_station_id),
       distance_km: busLine.distance_km.toString(),
       duration_minutes: busLine.duration_minutes.toString(),
       status: busLine.status,
@@ -87,15 +204,39 @@ export function BusLines() {
   };
 
   const handleDelete = async (busLine: BusLine) => {
+    // ✅ DEBUG : Voir la structure exacte
+    console.log('=== DELETE DEBUG ===');
+    console.log('Bus Line object:', busLine);
+    
     if (!confirm('Are you sure you want to delete this bus line?')) return;
 
+    // ✅ Trouve le bon champ ID
+    const busLineId = getBusLineId(busLine);
+    
+    console.log('Using ID:', busLineId);
+    
+    if (!busLineId) {
+      showToast('Cannot delete: Bus Line ID not found', 'error');
+      return;
+    }
+
     try {
-      const { error } = await supabase.from('bus_lines').delete().eq('id', busLine.id);
-      if (error) throw error;
+      const response = await fetch(`${API_URL}/bus_lines/${busLineId}`, {
+        method: 'DELETE',
+      });
+
+      const result = await response.json();
+      if (!response.ok || result.error) {
+        throw new Error(result.error || 'Failed to delete bus line');
+      }
+      
       showToast('Bus line deleted successfully', 'success');
+      
+      // ✅ Rafraîchir les données
       await fetchData('busLines');
-    } catch (error: any) {
-      showToast(error.message || 'An error occurred', 'error');
+    } catch (error: unknown) {
+      console.error('Error:', error);
+      showToast(getErrorMessage(error) || 'An error occurred', 'error');
     }
   };
 
@@ -126,12 +267,16 @@ export function BusLines() {
     },
   ];
 
+  // ✅ Utilise les bons IDs pour les stations
   const stationOptions = [
     { value: '', label: 'Select a station' },
-    ...stations.map((station) => ({
-      value: station.id,
-      label: `${station.name} (${station.city?.name})`,
-    })),
+    ...stations.map((station) => {
+      const stationId = getStationId(station);
+      return {
+        value: stationId,
+        label: `${station.name} (${station.city?.name || 'Unknown'})`,
+      };
+    }),
   ];
 
   const statusOptions = [
@@ -230,7 +375,7 @@ export function BusLines() {
             options={statusOptions}
             required
           />
-          <div className="flex gap-3 justify-end pt-4">
+          <div className="flex justify-end gap-3 pt-4">
             <Button
               variant="secondary"
               type="button"

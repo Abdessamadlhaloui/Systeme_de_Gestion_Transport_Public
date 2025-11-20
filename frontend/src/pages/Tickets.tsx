@@ -7,23 +7,86 @@ import { FormInput, FormSelect } from '../components/FormInput';
 import { useToast } from '../components/Toast';
 import { useApp } from '../context/AppContext';
 import { Plus } from 'lucide-react';
-import { supabase } from '../utils/supabase';
-import { Ticket } from '../types';
+import { api } from '../utils/api';
+import { Ticket, Trip, Station } from '../types';
+
+type TicketStatus = Ticket['status'];
+
+interface TicketFormData {
+  trip_id: string;
+  start_station: string;
+  end_station: string;
+  seat_number: string;
+  price: string;
+  status: TicketStatus;
+  booking_date: string;
+}
+
+const TICKET_STATUS: TicketStatus[] = ['booked', 'confirmed', 'cancelled', 'used'];
+
+const getTicketId = (ticket: Ticket | Record<string, unknown>) => {
+  const source = ticket as Record<string, unknown>;
+  const rawId =
+    source['id_ticket'] ||
+    source['ID_TICKET'] ||
+    source['id'] ||
+    source['ID'];
+
+  if (rawId === undefined || rawId === null) return null;
+  return String(rawId);
+};
+
+const getTripIdValue = (trip: Trip | Record<string, unknown>) => {
+  const source = trip as Record<string, unknown>;
+  const rawId =
+    source['id_trip'] ||
+    source['ID_TRIP'] ||
+    source['id'] ||
+    source['ID'];
+
+  if (rawId === undefined || rawId === null) return '';
+  return String(rawId);
+};
+
+const getTodayLocalISODate = () => {
+  const now = new Date();
+  const offsetMs = now.getTimezoneOffset() * 60 * 1000;
+  return new Date(now.getTime() - offsetMs).toISOString().split('T')[0];
+};
+
+const normalizeDateForInput = (value?: string | null) => {
+  if (!value) return getTodayLocalISODate();
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value.slice(0, 10);
+  }
+
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+
+  return getTodayLocalISODate();
+};
+
+const stationOptionLabel = (station: Station) => {
+  const city = station.city?.name ? ` - ${station.city.name}` : '';
+  return `${station.name}${city}`;
+};
 
 export function Tickets() {
-  const { tickets, trips, fetchData } = useApp();
+  const { tickets, trips, stations, fetchData } = useApp();
   const { showToast } = useToast();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTicket, setEditingTicket] = useState<Ticket | null>(null);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<TicketFormData>({
     trip_id: '',
-    passenger_name: '',
-    passenger_email: '',
-    passenger_phone: '',
+    start_station: '',
+    end_station: '',
     seat_number: '',
     price: '',
     status: 'booked',
-    booking_date: new Date().toISOString().split('T')[0],
+    booking_date: getTodayLocalISODate(),
   });
   const [loading, setLoading] = useState(false);
 
@@ -32,21 +95,37 @@ export function Tickets() {
     setLoading(true);
 
     try {
+      const priceValue = Number(formData.price);
+      const tripId = Number(formData.trip_id);
+
+      if (Number.isNaN(priceValue) || Number.isNaN(tripId)) {
+        throw new Error('Trip and price must be numeric');
+      }
+
+      const bookingDate = formData.booking_date || getTodayLocalISODate();
+
       const payload = {
-        ...formData,
-        price: parseFloat(formData.price),
+        trip_id: tripId,
+        passenger_name: formData.start_station.trim(),
+        passenger_email: formData.end_station.trim(),
+        passenger_phone: 'N/A',
+        seat_number: formData.seat_number.trim(),
+        price: priceValue,
+        status: formData.status,
+        booking_date: bookingDate,
       };
 
       if (editingTicket) {
-        const { error } = await supabase
-          .from('tickets')
-          .update(payload)
-          .eq('id', editingTicket.id);
-        if (error) throw error;
+        const ticketId = getTicketId(editingTicket);
+        if (!ticketId) {
+          throw new Error('Ticket ID missing, cannot update');
+        }
+        const { error } = await api.from('tickets').update(payload).eq('id', ticketId);
+        if (error) throw new Error(error);
         showToast('Ticket updated successfully', 'success');
       } else {
-        const { error } = await supabase.from('tickets').insert([payload]);
-        if (error) throw error;
+        const { error } = await api.from('tickets').insert(payload);
+        if (error) throw new Error(error);
         showToast('Ticket booked successfully', 'success');
       }
       await fetchData('tickets');
@@ -62,13 +141,12 @@ export function Tickets() {
   const resetForm = () => {
     setFormData({
       trip_id: '',
-      passenger_name: '',
-      passenger_email: '',
-      passenger_phone: '',
+      start_station: '',
+      end_station: '',
       seat_number: '',
       price: '',
       status: 'booked',
-      booking_date: new Date().toISOString().split('T')[0],
+      booking_date: getTodayLocalISODate(),
     });
     setEditingTicket(null);
   };
@@ -77,13 +155,12 @@ export function Tickets() {
     setEditingTicket(ticket);
     setFormData({
       trip_id: ticket.trip_id,
-      passenger_name: ticket.passenger_name,
-      passenger_email: ticket.passenger_email,
-      passenger_phone: ticket.passenger_phone,
+      start_station: ticket.passenger_name || (ticket as any).station_montee || '',
+      end_station: ticket.passenger_email || (ticket as any).station_descente || '',
       seat_number: ticket.seat_number,
       price: ticket.price.toString(),
       status: ticket.status,
-      booking_date: ticket.booking_date,
+      booking_date: normalizeDateForInput(ticket.booking_date),
     });
     setIsModalOpen(true);
   };
@@ -92,8 +169,13 @@ export function Tickets() {
     if (!confirm('Are you sure you want to delete this ticket?')) return;
 
     try {
-      const { error } = await supabase.from('tickets').delete().eq('id', ticket.id);
-      if (error) throw error;
+      const ticketId = getTicketId(ticket);
+      if (!ticketId) {
+        throw new Error('Ticket ID missing, cannot delete');
+      }
+
+      const { error } = await api.from('tickets').delete().eq('id', ticketId);
+      if (error) throw new Error(error);
       showToast('Ticket deleted successfully', 'success');
       await fetchData('tickets');
     } catch (error: any) {
@@ -102,14 +184,27 @@ export function Tickets() {
   };
 
   const columns = [
-    { key: 'passenger_name', label: 'Passenger', sortable: true },
     {
       key: 'trip',
       label: 'Trip',
       render: (ticket: Ticket) =>
         ticket.trip?.bus_line
           ? `${ticket.trip.bus_line.code} - ${new Date(ticket.trip.departure_time).toLocaleDateString()}`
-          : '-',
+          : ticket.trip_id,
+    },
+    {
+      key: 'start_station',
+      label: 'Start Station',
+      sortable: true,
+      render: (ticket: Ticket) =>
+        ticket.passenger_name || (ticket as any).station_montee || '-',
+    },
+    {
+      key: 'end_station',
+      label: 'End Station',
+      sortable: true,
+      render: (ticket: Ticket) =>
+        ticket.passenger_email || (ticket as any).station_descente || '-',
     },
     { key: 'seat_number', label: 'Seat', sortable: true },
     {
@@ -134,20 +229,24 @@ export function Tickets() {
 
   const tripOptions = [
     { value: '', label: 'Select a trip' },
-    ...trips
-      .filter((trip) => trip.status === 'scheduled' || trip.status === 'in_progress')
-      .map((trip) => ({
-        value: trip.id,
-        label: `${trip.bus_line?.code} - ${new Date(trip.departure_time).toLocaleString()}`,
-      })),
+    ...trips.map((trip) => ({
+      value: getTripIdValue(trip),
+      label: `${trip.bus_line?.code || 'Trip'} - ${new Date(trip.departure_time).toLocaleString()}`,
+    })),
   ];
 
-  const statusOptions = [
-    { value: 'booked', label: 'Booked' },
-    { value: 'confirmed', label: 'Confirmed' },
-    { value: 'cancelled', label: 'Cancelled' },
-    { value: 'used', label: 'Used' },
+  const stationOptions = [
+    { value: '', label: 'Select station' },
+    ...stations.map((station) => ({
+      value: station.name,
+      label: stationOptionLabel(station),
+    })),
   ];
+
+  const statusOptions = TICKET_STATUS.map((status) => ({
+    value: status,
+    label: status.charAt(0).toUpperCase() + status.slice(1),
+  }));
 
   return (
     <PageLayout
@@ -191,25 +290,19 @@ export function Tickets() {
             options={tripOptions}
             required
           />
-          <FormInput
-            label="Passenger Name"
-            value={formData.passenger_name}
-            onChange={(e) => setFormData({ ...formData, passenger_name: e.target.value })}
-            required
-          />
           <div className="grid grid-cols-2 gap-4">
-            <FormInput
-              label="Email"
-              type="email"
-              value={formData.passenger_email}
-              onChange={(e) => setFormData({ ...formData, passenger_email: e.target.value })}
+            <FormSelect
+              label="Start Station"
+              value={formData.start_station}
+              onChange={(e) => setFormData({ ...formData, start_station: e.target.value })}
+              options={stationOptions}
               required
             />
-            <FormInput
-              label="Phone"
-              type="tel"
-              value={formData.passenger_phone}
-              onChange={(e) => setFormData({ ...formData, passenger_phone: e.target.value })}
+            <FormSelect
+              label="End Station"
+              value={formData.end_station}
+              onChange={(e) => setFormData({ ...formData, end_station: e.target.value })}
+              options={stationOptions}
               required
             />
           </div>
@@ -229,15 +322,22 @@ export function Tickets() {
               onChange={(e) => setFormData({ ...formData, price: e.target.value })}
               required
             />
-            <FormSelect
-              label="Status"
-              value={formData.status}
-              onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-              options={statusOptions}
+            <FormInput
+              label="Booking Date"
+              type="date"
+              value={formData.booking_date}
+              onChange={(e) => setFormData({ ...formData, booking_date: e.target.value })}
               required
             />
           </div>
-          <div className="flex gap-3 justify-end pt-4">
+          <FormSelect
+            label="Status"
+            value={formData.status}
+            onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+            options={statusOptions}
+            required
+          />
+          <div className="flex justify-end gap-3 pt-4">
             <Button
               variant="secondary"
               type="button"

@@ -7,15 +7,93 @@ import { FormInput, FormSelect } from '../components/FormInput';
 import { useToast } from '../components/Toast';
 import { useApp } from '../context/AppContext';
 import { Plus } from 'lucide-react';
-import { supabase } from '../utils/supabase';
+import { api } from '../utils/api';
 import { Subscription } from '../types';
+
+type SubscriptionStatus = Subscription['status'];
+type SubscriptionType = Subscription['type'];
+
+interface SubscriptionFormData {
+  user_name: string;
+  user_email: string;
+  bus_line_id: string;
+  type: SubscriptionType;
+  start_date: string;
+  end_date: string;
+  price: string;
+  status: SubscriptionStatus;
+}
+
+const SUBSCRIPTION_TYPES: SubscriptionType[] = ['weekly', 'monthly', 'yearly'];
+const SUBSCRIPTION_STATUS: SubscriptionStatus[] = ['active', 'expired', 'cancelled'];
+
+const getSubscriptionId = (sub: Subscription | Record<string, unknown>) => {
+  const source = sub as Record<string, unknown>;
+  const rawId =
+    source['id_subscription'] ||
+    source['ID_SUBSCRIPTION'] ||
+    source['id'] ||
+    source['ID'];
+
+  if (rawId === undefined || rawId === null) return null;
+  return String(rawId);
+};
+
+const getBusLineId = (line: { id?: string; [key: string]: unknown }) => {
+  const source = line as Record<string, unknown>;
+  const rawId =
+    source['id_line'] ||
+    source['ID_LINE'] ||
+    source['id_bus_line'] ||
+    source['ID_BUS_LINE'] ||
+    source['id'] ||
+    source['ID'];
+
+  if (rawId === undefined || rawId === null) return '';
+  return String(rawId);
+};
+
+const normalizeDateForInput = (value?: string | null) => {
+  if (!value) return '';
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value.slice(0, 10);
+  }
+
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) {
+    const [day, month, year] = value.split('/');
+    return `${year}-${month}-${day}`;
+  }
+
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+
+  return '';
+};
+
+const formatDateForOracle = (value: string) => {
+  if (!value) return '';
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return value;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-');
+    return `${day}/${month}/${year}`;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const day = String(parsed.getDate()).padStart(2, '0');
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const year = parsed.getFullYear();
+  return `${day}/${month}/${year}`;
+};
 
 export function Subscriptions() {
   const { subscriptions, busLines, fetchData } = useApp();
   const { showToast } = useToast();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<SubscriptionFormData>({
     user_name: '',
     user_email: '',
     bus_line_id: '',
@@ -32,21 +110,69 @@ export function Subscriptions() {
     setLoading(true);
 
     try {
+      // Validate bus line selection
+      if (!formData.bus_line_id || formData.bus_line_id.trim() === '') {
+        throw new Error('Please select a bus line');
+      }
+
+      // Validate that the selected bus line exists
+      const busLineIdStr = formData.bus_line_id.trim();
+      const selectedBusLine = busLines.find((line) => getBusLineId(line) === busLineIdStr);
+      if (!selectedBusLine) {
+        throw new Error('Please select a valid bus line');
+      }
+
+      // Convert bus_line_id to number for Oracle (handle hex strings)
+      let busLineId: number;
+      if (/^[0-9A-Fa-f]+$/.test(busLineIdStr) && busLineIdStr.length > 2) {
+        // Hex string - convert to number
+        busLineId = parseInt(busLineIdStr, 16);
+        if (Number.isNaN(busLineId)) {
+          throw new Error('Invalid bus line ID format');
+        }
+      } else {
+        // Regular number string
+        busLineId = Number(busLineIdStr);
+        if (Number.isNaN(busLineId) || busLineId <= 0) {
+          throw new Error('Bus line must be a valid number');
+        }
+      }
+
+      // Validate price
+      if (!formData.price || formData.price.trim() === '') {
+        throw new Error('Price is required');
+      }
+
+      const priceValue = Number(formData.price);
+      if (Number.isNaN(priceValue) || priceValue <= 0) {
+        throw new Error('Price must be a valid positive number');
+      }
+
       const payload = {
-        ...formData,
-        price: parseFloat(formData.price),
+        user_name: formData.user_name.trim(),
+        user_email: formData.user_email.trim(),
+        bus_line_id: busLineId, // Number for Oracle NUMBER column
+        type: formData.type,
+        start_date: formatDateForOracle(formData.start_date),
+        end_date: formatDateForOracle(formData.end_date),
+        price: priceValue,
+        status: formData.status,
       };
 
       if (editingSub) {
-        const { error } = await supabase
+        const subscriptionId = getSubscriptionId(editingSub);
+        if (!subscriptionId) {
+          throw new Error('Subscription ID missing, cannot update');
+        }
+        const { error } = await api
           .from('subscriptions')
           .update(payload)
-          .eq('id', editingSub.id);
-        if (error) throw error;
+          .eq('id', subscriptionId);
+        if (error) throw new Error(error);
         showToast('Subscription updated successfully', 'success');
       } else {
-        const { error } = await supabase.from('subscriptions').insert([payload]);
-        if (error) throw error;
+        const { error } = await api.from('subscriptions').insert(payload);
+        if (error) throw new Error(error);
         showToast('Subscription created successfully', 'success');
       }
       await fetchData('subscriptions');
@@ -78,10 +204,10 @@ export function Subscriptions() {
     setFormData({
       user_name: sub.user_name,
       user_email: sub.user_email,
-      bus_line_id: sub.bus_line_id,
+      bus_line_id: String(sub.bus_line_id || ''),
       type: sub.type,
-      start_date: sub.start_date,
-      end_date: sub.end_date,
+      start_date: normalizeDateForInput(sub.start_date),
+      end_date: normalizeDateForInput(sub.end_date),
       price: sub.price.toString(),
       status: sub.status,
     });
@@ -92,8 +218,12 @@ export function Subscriptions() {
     if (!confirm('Are you sure you want to delete this subscription?')) return;
 
     try {
-      const { error } = await supabase.from('subscriptions').delete().eq('id', sub.id);
-      if (error) throw error;
+      const subscriptionId = getSubscriptionId(sub);
+      if (!subscriptionId) {
+        throw new Error('Subscription ID missing, cannot delete');
+      }
+      const { error } = await api.from('subscriptions').delete().eq('id', subscriptionId);
+      if (error) throw new Error(error);
       showToast('Subscription deleted successfully', 'success');
       await fetchData('subscriptions');
     } catch (error: any) {
@@ -103,6 +233,7 @@ export function Subscriptions() {
 
   const columns = [
     { key: 'user_name', label: 'User', sortable: true },
+    { key: 'user_email', label: 'Email', sortable: true },
     {
       key: 'bus_line',
       label: 'Bus Line',
@@ -138,20 +269,18 @@ export function Subscriptions() {
 
   const busLineOptions = [
     { value: '', label: 'Select a bus line' },
-    ...busLines.map((line) => ({ value: line.id, label: `${line.code} - ${line.name}` })),
+    ...busLines.map((line) => ({ value: getBusLineId(line), label: `${line.code} - ${line.name}` })),
   ];
 
-  const typeOptions = [
-    { value: 'weekly', label: 'Weekly' },
-    { value: 'monthly', label: 'Monthly' },
-    { value: 'yearly', label: 'Yearly' },
-  ];
+  const typeOptions = SUBSCRIPTION_TYPES.map((type) => ({
+    value: type,
+    label: type.charAt(0).toUpperCase() + type.slice(1),
+  }));
 
-  const statusOptions = [
-    { value: 'active', label: 'Active' },
-    { value: 'expired', label: 'Expired' },
-    { value: 'cancelled', label: 'Cancelled' },
-  ];
+  const statusOptions = SUBSCRIPTION_STATUS.map((status) => ({
+    value: status,
+    label: status.charAt(0).toUpperCase() + status.slice(1),
+  }));
 
   return (
     <PageLayout
@@ -212,7 +341,7 @@ export function Subscriptions() {
             <FormSelect
               label="Type"
               value={formData.type}
-              onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value as SubscriptionType })}
               options={typeOptions}
               required
             />
@@ -244,11 +373,11 @@ export function Subscriptions() {
           <FormSelect
             label="Status"
             value={formData.status}
-            onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+            onChange={(e) => setFormData({ ...formData, status: e.target.value as SubscriptionStatus })}
             options={statusOptions}
             required
           />
-          <div className="flex gap-3 justify-end pt-4">
+          <div className="flex justify-end gap-3 pt-4">
             <Button
               variant="secondary"
               type="button"

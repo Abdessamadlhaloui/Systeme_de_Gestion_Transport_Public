@@ -7,15 +7,89 @@ import { FormInput, FormSelect } from '../components/FormInput';
 import { useToast } from '../components/Toast';
 import { useApp } from '../context/AppContext';
 import { Plus } from 'lucide-react';
-import { supabase } from '../utils/supabase';
+import { api } from '../utils/api';
 import { Driver } from '../types';
+
+type DriverStatus = 'active' | 'inactive' | 'on_leave';
+
+interface DriverFormData {
+  name: string;
+  email: string;
+  phone: string;
+  license_number: string;
+  license_expiry: string;
+  status: DriverStatus;
+}
+
+const DRIVER_STATUS: DriverStatus[] = ['active', 'inactive', 'on_leave'];
+
+const normalizeDateForInput = (value?: string | null) => {
+  if (!value) return '';
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value.slice(0, 10);
+  }
+
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) {
+    const [day, month, year] = value.split('/');
+    return `${year}-${month}-${day}`;
+  }
+
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+
+  return '';
+};
+
+const formatDateForOracle = (value: string) => {
+  if (!value) return '';
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return value;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-');
+    return `${day}/${month}/${year}`;
+  }
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    const day = String(parsed.getDate()).padStart(2, '0');
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const year = parsed.getFullYear();
+    return `${day}/${month}/${year}`;
+  }
+  return value;
+};
+
+const buildDriverPayload = (data: DriverFormData) => ({
+  name: data.name.trim(),
+  email: data.email.trim(),
+  phone: data.phone.trim(),
+  license_number: data.license_number.trim(),
+  license_expiry: formatDateForOracle(data.license_expiry),
+  status: data.status,
+});
+
+const getDriverId = (driver: Driver | Record<string, unknown>) => {
+  const source = driver as Record<string, unknown>;
+  const rawId =
+    source['id_driver'] ||
+    source['ID_DRIVER'] ||
+    source['id'] ||
+    source['ID'];
+
+  if (rawId === undefined || rawId === null) return null;
+  return String(rawId);
+};
+
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
 export function Drivers() {
   const { drivers, fetchData } = useApp();
   const { showToast } = useToast();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDriver, setEditingDriver] = useState<Driver | null>(null);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<DriverFormData>({
     name: '',
     email: '',
     phone: '',
@@ -30,23 +104,27 @@ export function Drivers() {
     setLoading(true);
 
     try {
+      const payload = buildDriverPayload(formData);
+
       if (editingDriver) {
-        const { error } = await supabase
-          .from('drivers')
-          .update(formData)
-          .eq('id', editingDriver.id);
-        if (error) throw error;
+        const driverId = getDriverId(editingDriver);
+        if (!driverId) {
+          throw new Error('Driver ID missing, cannot update');
+        }
+
+        const { error } = await api.from('drivers').update(payload).eq('id', driverId);
+        if (error) throw new Error(error);
         showToast('Driver updated successfully', 'success');
       } else {
-        const { error } = await supabase.from('drivers').insert([formData]);
-        if (error) throw error;
+        const { error } = await api.from('drivers').insert(payload);
+        if (error) throw new Error(error);
         showToast('Driver created successfully', 'success');
       }
       await fetchData('drivers');
       setIsModalOpen(false);
       resetForm();
-    } catch (error: any) {
-      showToast(error.message || 'An error occurred', 'error');
+    } catch (error: unknown) {
+      showToast(getErrorMessage(error) || 'An error occurred', 'error');
     } finally {
       setLoading(false);
     }
@@ -71,7 +149,7 @@ export function Drivers() {
       email: driver.email,
       phone: driver.phone,
       license_number: driver.license_number,
-      license_expiry: driver.license_expiry,
+      license_expiry: normalizeDateForInput(driver.license_expiry),
       status: driver.status,
     });
     setIsModalOpen(true);
@@ -81,12 +159,17 @@ export function Drivers() {
     if (!confirm('Are you sure you want to delete this driver?')) return;
 
     try {
-      const { error } = await supabase.from('drivers').delete().eq('id', driver.id);
-      if (error) throw error;
+      const driverId = getDriverId(driver);
+      if (!driverId) {
+        throw new Error('Driver ID missing, cannot delete');
+      }
+
+      const { error } = await api.from('drivers').delete().eq('id', driverId);
+      if (error) throw new Error(error);
       showToast('Driver deleted successfully', 'success');
       await fetchData('drivers');
-    } catch (error: any) {
-      showToast(error.message || 'An error occurred', 'error');
+    } catch (error: unknown) {
+      showToast(getErrorMessage(error) || 'An error occurred', 'error');
     }
   };
 
@@ -103,11 +186,13 @@ export function Drivers() {
     },
   ];
 
-  const statusOptions = [
-    { value: 'active', label: 'Active' },
-    { value: 'inactive', label: 'Inactive' },
-    { value: 'on_leave', label: 'On Leave' },
-  ];
+  const statusOptions = DRIVER_STATUS.map((status) => ({
+    value: status,
+    label:
+      status === 'on_leave'
+        ? 'On Leave'
+        : status.charAt(0).toUpperCase() + status.slice(1),
+  }));
 
   return (
     <PageLayout
@@ -184,11 +269,13 @@ export function Drivers() {
           <FormSelect
             label="Status"
             value={formData.status}
-            onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+            onChange={(e) =>
+              setFormData({ ...formData, status: e.target.value as DriverStatus })
+            }
             options={statusOptions}
             required
           />
-          <div className="flex gap-3 justify-end pt-4">
+          <div className="flex justify-end gap-3 pt-4">
             <Button
               variant="secondary"
               type="button"

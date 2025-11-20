@@ -12,12 +12,17 @@ import {
   AlertTriangle,
   Menu,
   X,
+  PanelLeftClose,
+  PanelLeft,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { useTheme } from '../context/ThemeContext';
 
 const menuItems = [
-  { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
+  { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
   { icon: MapPin, label: 'Cities', path: '/cities' },
   { icon: Building2, label: 'Stations', path: '/stations' },
   { icon: Route, label: 'Bus Lines', path: '/bus-lines' },
@@ -33,18 +38,52 @@ const menuItems = [
 export function Sidebar() {
   const location = useLocation();
   const [isOpen, setIsOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const { isDark, toggleTheme } = useTheme();
 
-  const SidebarContent = () => (
+  const SidebarContent = ({ isMobile = false }) => (
     <>
-      <div className="px-6 py-5 border-b border-gray-200">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
-            <Bus className="w-6 h-6 text-white" />
+      <div className="px-6 py-5 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {!isCollapsed && (
+              <>
+                <div className="flex items-center justify-center flex-shrink-0 w-10 h-10 bg-blue-600 rounded-lg">
+                  <Bus className="w-6 h-6 text-white" />
+                </div>
+                {!isMobile && (
+                  <div>
+                    <h1 className="text-xl font-bold text-gray-900 dark:text-white">BusManager</h1>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Management System</p>
+                  </div>
+                )}
+              </>
+            )}
+            {isCollapsed && isMobile && (
+              <>
+                <div className="flex items-center justify-center flex-shrink-0 w-10 h-10 bg-blue-600 rounded-lg">
+                  <Bus className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900 dark:text-white">BusManager</h1>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Management System</p>
+                </div>
+              </>
+            )}
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">BusManager</h1>
-            <p className="text-xs text-gray-500">Management System</p>
-          </div>
+          {!isMobile && (
+            <button
+              onClick={() => setIsCollapsed(!isCollapsed)}
+              className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex-shrink-0"
+              title={isCollapsed ? 'Ouvrir la sidebar' : 'Fermer la sidebar'}
+            >
+              {isCollapsed ? (
+                <PanelLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+              ) : (
+                <PanelLeftClose className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+              )}
+            </button>
+          )}
         </div>
       </div>
 
@@ -58,45 +97,73 @@ export function Sidebar() {
               to={item.path}
               onClick={() => setIsOpen(false)}
               className="block"
+              title={isCollapsed && !isMobile ? item.label : ''}
             >
               <motion.div
-                whileHover={{ x: 4 }}
+                whileHover={{ x: isCollapsed && !isMobile ? 0 : 4 }}
                 className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
                   isActive
-                    ? 'bg-blue-50 text-blue-700 font-medium'
-                    : 'text-gray-700 hover:bg-gray-100'
-                }`}
+                    ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-medium'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                } ${isCollapsed && !isMobile ? 'justify-center' : ''}`}
               >
-                <Icon className="w-5 h-5 flex-shrink-0" />
-                <span>{item.label}</span>
+                <Icon className="flex-shrink-0 w-5 h-5" />
+                {(!isCollapsed || isMobile) && <span>{item.label}</span>}
               </motion.div>
             </Link>
           );
         })}
       </nav>
+
+      {/* Theme toggle button at the bottom */}
+      <div className="px-3 py-4 border-t border-gray-200 dark:border-gray-700">
+        <button
+          onClick={toggleTheme}
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 ${
+            isCollapsed && !isMobile ? 'justify-center' : ''
+          }`}
+          title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {isDark ? (
+            <Sun className="flex-shrink-0 w-5 h-5" />
+          ) : (
+            <Moon className="flex-shrink-0 w-5 h-5" />
+          )}
+          {(!isCollapsed || isMobile) && (
+            <span>{isDark ? 'Light Mode' : 'Dark Mode'}</span>
+          )}
+        </button>
+      </div>
     </>
   );
 
   return (
     <>
+      {/* Bouton hamburger mobile */}
       <button
         onClick={() => setIsOpen(true)}
-        className="lg:hidden fixed top-4 left-4 z-40 p-2 bg-white rounded-lg shadow-lg"
+        className="fixed z-40 p-2 bg-white dark:bg-gray-800 rounded-lg shadow-lg lg:hidden top-4 left-4"
       >
-        <Menu className="w-6 h-6" />
+        <Menu className="w-6 h-6 text-gray-900 dark:text-white" />
       </button>
 
-      <aside className="hidden lg:flex lg:flex-col lg:w-64 bg-white border-r border-gray-200 h-screen sticky top-0">
-        <SidebarContent />
-      </aside>
+      {/* Sidebar Desktop avec collapse */}
+      <motion.aside
+        animate={{ width: isCollapsed ? 80 : 256 }}
+        transition={{ duration: 0.3, ease: 'easeInOut' }}
+        className="sticky top-0 hidden h-screen bg-white dark:bg-[#1a1f2e] border-r border-gray-200 dark:border-gray-800 lg:flex lg:flex-col"
+      >
+        <SidebarContent isMobile={false} />
+      </motion.aside>
 
+      {/* Sidebar Mobile */}
       {isOpen && (
         <>
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-40"
+            className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden"
             onClick={() => setIsOpen(false)}
           />
           <motion.aside
@@ -104,15 +171,15 @@ export function Sidebar() {
             animate={{ x: 0 }}
             exit={{ x: -280 }}
             transition={{ type: 'spring', damping: 25 }}
-            className="lg:hidden fixed left-0 top-0 bottom-0 w-64 bg-white z-50 flex flex-col shadow-2xl"
+            className="fixed top-0 bottom-0 left-0 z-50 flex flex-col w-64 bg-white dark:bg-[#1a1f2e] shadow-2xl lg:hidden"
           >
             <button
               onClick={() => setIsOpen(false)}
-              className="absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-lg"
+              className="absolute p-2 rounded-lg top-4 right-4 hover:bg-gray-100 dark:hover:bg-gray-700"
             >
-              <X className="w-5 h-5" />
+              <X className="w-5 h-5 text-gray-900 dark:text-white" />
             </button>
-            <SidebarContent />
+            <SidebarContent isMobile={true} />
           </motion.aside>
         </>
       )}

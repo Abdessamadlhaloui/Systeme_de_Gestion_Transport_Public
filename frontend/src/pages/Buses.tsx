@@ -7,12 +7,23 @@ import { FormInput, FormSelect } from '../components/FormInput';
 import { useToast } from '../components/Toast';
 import { useApp } from '../context/AppContext';
 import { Plus } from 'lucide-react';
-import { supabase } from '../utils/supabase';
 import { Bus } from '../types';
+
+const API_URL = 'http://localhost:3001/api';
 
 export function Buses() {
   const { buses, fetchData } = useApp();
   const { showToast } = useToast();
+  
+  // ✅ DEBUG : Afficher les données reçues
+  console.log('=== BUSES PAGE DEBUG ===');
+  console.log('Buses data:', buses);
+  console.log('Buses count:', buses.length);
+  if (buses.length > 0) {
+    console.log('First bus:', buses[0]);
+    console.log('First bus keys:', Object.keys(buses[0]));
+  }
+  
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBus, setEditingBus] = useState<Bus | null>(null);
   const [formData, setFormData] = useState({
@@ -30,29 +41,60 @@ export function Buses() {
     setLoading(true);
 
     try {
+      // ✅ DEBUG : Voir ce qui est envoyé
+      console.log('=== SUBMIT DEBUG ===');
+      console.log('formData:', formData);
+      
       const payload = {
-        ...formData,
+        plate_number: formData.plate_number,
+        model: formData.model,
         capacity: parseInt(formData.capacity),
         year: parseInt(formData.year),
+        status: formData.status,
         last_maintenance_date: formData.last_maintenance_date || null,
       };
+      
+      console.log('Payload to send:', payload);
 
       if (editingBus) {
-        const { error } = await supabase
-          .from('buses')
-          .update(payload)
-          .eq('id', editingBus.id);
-        if (error) throw error;
+        // ✅ UPDATE
+        const busId = editingBus.id_bus || editingBus.ID_BUS || editingBus.id;
+        
+        const response = await fetch(`${API_URL}/buses/${busId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const result = await response.json();
+        if (!response.ok || result.error) {
+          throw new Error(result.error || 'Failed to update bus');
+        }
+        
         showToast('Bus updated successfully', 'success');
       } else {
-        const { error } = await supabase.from('buses').insert([payload]);
-        if (error) throw error;
+        // ✅ INSERT
+        const response = await fetch(`${API_URL}/buses`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const result = await response.json();
+        if (!response.ok || result.error) {
+          throw new Error(result.error || 'Failed to create bus');
+        }
+        
         showToast('Bus created successfully', 'success');
       }
+      
+      // ✅ Rafraîchir les données
       await fetchData('buses');
+      
       setIsModalOpen(false);
       resetForm();
     } catch (error: any) {
+      console.error('Error:', error);
       showToast(error.message || 'An error occurred', 'error');
     } finally {
       setLoading(false);
@@ -72,6 +114,10 @@ export function Buses() {
   };
 
   const handleEdit = (bus: Bus) => {
+    // ✅ DEBUG : Voir la structure exacte
+    console.log('=== EDIT DEBUG ===');
+    console.log('Bus object:', bus);
+    
     setEditingBus(bus);
     setFormData({
       plate_number: bus.plate_number,
@@ -85,14 +131,38 @@ export function Buses() {
   };
 
   const handleDelete = async (bus: Bus) => {
+    // ✅ DEBUG : Voir la structure exacte
+    console.log('=== DELETE DEBUG ===');
+    console.log('Bus object:', bus);
+    
     if (!confirm('Are you sure you want to delete this bus?')) return;
 
+    // ✅ Trouve le bon champ ID
+    const busId = bus.id_bus || bus.ID_BUS || bus.id;
+    
+    console.log('Using ID:', busId);
+    
+    if (!busId) {
+      showToast('Cannot delete: Bus ID not found', 'error');
+      return;
+    }
+
     try {
-      const { error } = await supabase.from('buses').delete().eq('id', bus.id);
-      if (error) throw error;
+      const response = await fetch(`${API_URL}/buses/${busId}`, {
+        method: 'DELETE',
+      });
+
+      const result = await response.json();
+      if (!response.ok || result.error) {
+        throw new Error(result.error || 'Failed to delete bus');
+      }
+      
       showToast('Bus deleted successfully', 'success');
+      
+      // ✅ Rafraîchir les données
       await fetchData('buses');
     } catch (error: any) {
+      console.error('Error:', error);
       showToast(error.message || 'An error occurred', 'error');
     }
   };
@@ -201,7 +271,7 @@ export function Buses() {
               setFormData({ ...formData, last_maintenance_date: e.target.value })
             }
           />
-          <div className="flex gap-3 justify-end pt-4">
+          <div className="flex justify-end gap-3 pt-4">
             <Button
               variant="secondary"
               type="button"

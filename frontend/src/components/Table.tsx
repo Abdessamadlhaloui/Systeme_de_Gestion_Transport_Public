@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { ChevronUp, ChevronDown, Search, Edit, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import React from 'react';
 
 interface Column<T> {
   key: keyof T | string;
@@ -19,7 +20,8 @@ interface TableProps<T> {
   emptyMessage?: string;
 }
 
-export function Table<T extends { id: string }>({
+// ✅ CHANGEMENT PRINCIPAL : Suppression de la contrainte { id: string }
+export function Table<T extends Record<string, any>>({
   data,
   columns,
   onEdit,
@@ -64,14 +66,32 @@ export function Table<T extends { id: string }>({
   const paginatedData = sortedData.slice(startIndex, startIndex + itemsPerPage);
 
   const getValue = (item: T, key: string): any => {
-    return key.split('.').reduce((obj: any, k) => obj?.[k], item);
+    try {
+      const value = key.split('.').reduce((obj: any, k) => obj?.[k], item);
+      // Handle null, undefined, or non-renderable values
+      if (value === null || value === undefined) return '-';
+      // If it's an object (but not a React element), stringify it
+      if (typeof value === 'object' && !React.isValidElement(value)) {
+        return JSON.stringify(value);
+      }
+      return value;
+    } catch (error) {
+      console.error(`Error getting value for key ${key}:`, error);
+      return '-';
+    }
+  };
+
+  // ✅ Fonction pour obtenir un identifiant unique
+  const getItemKey = (item: T, index: number): string => {
+    // Essaie d'utiliser id_city, puis id, puis l'index
+    return String(item.id_city || item.id || index);
   };
 
   return (
     <div className="space-y-4">
       {searchable && (
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+          <Search className="absolute w-5 h-5 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
           <input
             type="text"
             placeholder={searchPlaceholder}
@@ -80,21 +100,21 @@ export function Table<T extends { id: string }>({
               setSearchQuery(e.target.value);
               setCurrentPage(1);
             }}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+            className="w-full py-2 pl-10 pr-4 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="overflow-hidden bg-white dark:bg-gray-800 rounded-lg shadow">
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
               <tr>
                 {columns.map((column) => (
                   <th
                     key={String(column.key)}
-                    className={`px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider ${
-                      column.sortable ? 'cursor-pointer hover:bg-gray-100' : ''
+                    className={`px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider ${
+                      column.sortable ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800' : ''
                     }`}
                     onClick={() => column.sortable && handleSort(String(column.key))}
                   >
@@ -113,18 +133,18 @@ export function Table<T extends { id: string }>({
                   </th>
                 ))}
                 {(onEdit || onDelete) && (
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-700 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-xs font-medium tracking-wider text-right text-gray-700 dark:text-gray-300 uppercase">
                     Actions
                   </th>
                 )}
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
               {paginatedData.length === 0 ? (
                 <tr>
                   <td
                     colSpan={columns.length + (onEdit || onDelete ? 1 : 0)}
-                    className="px-6 py-8 text-center text-gray-500"
+                    className="px-6 py-8 text-center text-gray-500 dark:text-gray-400"
                   >
                     {emptyMessage}
                   </td>
@@ -132,24 +152,47 @@ export function Table<T extends { id: string }>({
               ) : (
                 paginatedData.map((item, index) => (
                   <motion.tr
-                    key={item.id}
+                    key={getItemKey(item, index)}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.02 }}
-                    className="hover:bg-gray-50 transition-colors"
+                    className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-700"
                   >
-                    {columns.map((column) => (
-                      <td key={String(column.key)} className="px-6 py-4 text-sm text-gray-900">
-                        {column.render ? column.render(item) : getValue(item, String(column.key))}
-                      </td>
-                    ))}
+                    {columns.map((column) => {
+                      let content: React.ReactNode = '-';
+                      try {
+                        if (column.render) {
+                          const rendered = column.render(item);
+                          // Check if rendered is valid
+                          if (rendered !== null && rendered !== undefined) {
+                            // Check if it's a valid React element or primitive
+                            if (React.isValidElement(rendered) || typeof rendered !== 'object') {
+                              content = rendered;
+                            } else {
+                              // If it's an object that's not a React element, try to stringify
+                              content = String(rendered);
+                            }
+                          }
+                        } else {
+                          content = getValue(item, String(column.key));
+                        }
+                      } catch (error) {
+                        console.error(`Error rendering column ${String(column.key)} for item:`, error, item);
+                        content = '-';
+                      }
+                      return (
+                        <td key={String(column.key)} className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">
+                          {content}
+                        </td>
+                      );
+                    })}
                     {(onEdit || onDelete) && (
-                      <td className="px-6 py-4 text-right text-sm">
+                      <td className="px-6 py-4 text-sm text-right">
                         <div className="flex items-center justify-end gap-2">
                           {onEdit && (
                             <button
                               onClick={() => onEdit(item)}
-                              className="text-blue-600 hover:text-blue-800 transition-colors"
+                              className="text-blue-600 dark:text-blue-400 transition-colors hover:text-blue-800 dark:hover:text-blue-300"
                             >
                               <Edit className="w-4 h-4" />
                             </button>
@@ -157,7 +200,7 @@ export function Table<T extends { id: string }>({
                           {onDelete && (
                             <button
                               onClick={() => onDelete(item)}
-                              className="text-red-600 hover:text-red-800 transition-colors"
+                              className="text-red-600 dark:text-red-400 transition-colors hover:text-red-800 dark:hover:text-red-300"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -173,8 +216,8 @@ export function Table<T extends { id: string }>({
         </div>
 
         {totalPages > 1 && (
-          <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-            <div className="text-sm text-gray-700">
+          <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 dark:border-gray-700">
+            <div className="text-sm text-gray-700 dark:text-gray-300">
               Showing {startIndex + 1} to {Math.min(startIndex + itemsPerPage, sortedData.length)} of{' '}
               {sortedData.length} results
             </div>
@@ -182,7 +225,7 @@ export function Table<T extends { id: string }>({
               <button
                 onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                 disabled={currentPage === 1}
-                className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Previous
               </button>
@@ -204,7 +247,7 @@ export function Table<T extends { id: string }>({
                     className={`px-3 py-1 text-sm border rounded ${
                       currentPage === pageNum
                         ? 'bg-blue-600 text-white border-blue-600'
-                        : 'border-gray-300 hover:bg-gray-50'
+                        : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
                     }`}
                   >
                     {pageNum}
@@ -214,7 +257,7 @@ export function Table<T extends { id: string }>({
               <button
                 onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                 disabled={currentPage === totalPages}
-                className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Next
               </button>

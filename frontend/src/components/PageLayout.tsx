@@ -19,8 +19,8 @@ export function PageLayout({ title, description, actions, children }: PageLayout
       <div className="mb-6 lg:mb-8">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
-            <h1 className="text-2xl lg:text-3xl font-bold text-gray-900">{title}</h1>
-            {description && <p className="mt-1 text-gray-600">{description}</p>}
+            <h1 className="text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white">{title}</h1>
+            {description && <p className="mt-1 text-gray-600 dark:text-gray-400">{description}</p>}
           </div>
           {actions && <div className="flex items-center gap-3">{actions}</div>}
         </div>

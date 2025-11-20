@@ -7,12 +7,14 @@ import { FormInput, FormSelect } from '../components/FormInput';
 import { useToast } from '../components/Toast';
 import { useApp } from '../context/AppContext';
 import { Plus } from 'lucide-react';
-import { supabase } from '../utils/supabase';
 import { Station } from '../types';
+
+const API_URL = 'http://localhost:3001/api';
 
 export function Stations() {
   const { stations, cities, fetchData } = useApp();
   const { showToast } = useToast();
+  
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStation, setEditingStation] = useState<Station | null>(null);
   const [formData, setFormData] = useState({
@@ -23,35 +25,55 @@ export function Stations() {
     longitude: '',
   });
   const [loading, setLoading] = useState(false);
-
+  
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
       const payload = {
-        ...formData,
+        name: formData.name,
+        city_id: formData.city_id,
+        address: formData.address,
         latitude: formData.latitude ? parseFloat(formData.latitude) : null,
         longitude: formData.longitude ? parseFloat(formData.longitude) : null,
       };
 
       if (editingStation) {
-        const { error } = await supabase
-          .from('stations')
-          .update(payload)
-          .eq('id', editingStation.id);
-        if (error) throw error;
+        const response = await fetch(`${API_URL}/stations/${editingStation.id_station}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const result = await response.json();
+        if (!response.ok || result.error) {
+          throw new Error(result.error || 'Failed to update station');
+        }
+        
         showToast('Station updated successfully', 'success');
       } else {
-        const { error } = await supabase.from('stations').insert([payload]);
-        if (error) throw error;
+        const response = await fetch(`${API_URL}/stations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const result = await response.json();
+        if (!response.ok || result.error) {
+          throw new Error(result.error || 'Failed to create station');
+        }
+        
         showToast('Station created successfully', 'success');
       }
+      
       await fetchData('stations');
+      
       setIsModalOpen(false);
       setFormData({ name: '', city_id: '', address: '', latitude: '', longitude: '' });
       setEditingStation(null);
     } catch (error: any) {
+      console.error('Error:', error);
       showToast(error.message || 'An error occurred', 'error');
     } finally {
       setLoading(false);
@@ -62,7 +84,7 @@ export function Stations() {
     setEditingStation(station);
     setFormData({
       name: station.name,
-      city_id: station.city_id,
+      city_id: String(station.city_id),
       address: station.address,
       latitude: station.latitude?.toString() || '',
       longitude: station.longitude?.toString() || '',
@@ -73,12 +95,27 @@ export function Stations() {
   const handleDelete = async (station: Station) => {
     if (!confirm('Are you sure you want to delete this station?')) return;
 
+    const stationId = station.id_station || station.ID_STATION;
+    
+    if (!stationId) {
+      showToast('Cannot delete: Station ID not found', 'error');
+      return;
+    }
+
     try {
-      const { error } = await supabase.from('stations').delete().eq('id', station.id);
-      if (error) throw error;
+      const response = await fetch(`${API_URL}/stations/${stationId}`, {
+        method: 'DELETE',
+      });
+
+      const result = await response.json();
+      if (!response.ok || result.error) {
+        throw new Error(result.error || 'Failed to delete station');
+      }
+      
       showToast('Station deleted successfully', 'success');
       await fetchData('stations');
     } catch (error: any) {
+      console.error('Error:', error);
       showToast(error.message || 'An error occurred', 'error');
     }
   };
@@ -96,7 +133,13 @@ export function Stations() {
 
   const cityOptions = [
     { value: '', label: 'Select a city' },
-    ...cities.map((city) => ({ value: city.id, label: `${city.name}, ${city.country}` })),
+    ...cities.map((city) => {
+      const cityId = city.id_city || city.ID_CITY || city.id;
+      return { 
+        value: String(cityId), 
+        label: `${city.name}, ${city.country}` 
+      };
+    }),
   ];
 
   return (
@@ -173,7 +216,7 @@ export function Stations() {
               placeholder="Optional"
             />
           </div>
-          <div className="flex gap-3 justify-end pt-4">
+          <div className="flex justify-end gap-3 pt-4">
             <Button
               variant="secondary"
               type="button"
